@@ -11,6 +11,7 @@ st.title("📈 Interactive Excel Plotter")
 uploaded_file = st.file_uploader("Upload an Excel file", type=["xls", "xlsx"])
 
 if uploaded_file is not None:
+
     # --- Sheet selection ---
     try:
         xlsx = pd.ExcelFile(uploaded_file)
@@ -23,10 +24,12 @@ if uploaded_file is not None:
             sheet_name = sheet_names[0]
 
         df = pd.read_excel(xlsx, sheet_name=sheet_name)
+
     except Exception as e:
         st.error(f"Error reading file: {e}")
         st.stop()
 
+    # --- Data preview ---
     st.subheader("Data Preview")
     st.caption(f"Showing data from sheet: **{sheet_name}**")
     st.dataframe(df.head())
@@ -39,7 +42,7 @@ if uploaded_file is not None:
         index=0
     )
 
-    # --- Column selection (generic) ---
+    # --- Column selection ---
     st.sidebar.header("Column Selection")
     all_columns = df.columns.tolist()
     selected_columns = st.sidebar.multiselect(
@@ -47,17 +50,20 @@ if uploaded_file is not None:
         all_columns,
         default=all_columns
     )
+
     if len(selected_columns) < 1:
         st.warning("Please select at least one column.")
         st.stop()
 
     numeric_cols = df[selected_columns].select_dtypes(include=["number"]).columns.tolist()
+
     if len(numeric_cols) == 0:
         st.error("No numeric columns available.")
         st.stop()
 
     # --- Shared settings ---
     st.sidebar.header("Plot Settings")
+
     if plot_type == "Scatter Plot":
         if len(numeric_cols) < 2:
             st.error("Scatter plot requires at least TWO numeric columns.")
@@ -67,17 +73,18 @@ if uploaded_file is not None:
         x_label = st.sidebar.text_input("X-axis label", value=x_col, key="scatter_xlab")
         y_label = st.sidebar.text_input("Y-axis label", value=y_col, key="scatter_ylab")
         title = st.sidebar.text_input("Plot title", value=f"{y_col} vs {x_col}", key="scatter_title")
+
     elif plot_type == "Stacked Bar Chart":
         x_label = st.sidebar.text_input("X-axis label", value="Row Label", key="bar_xlab")
         y_label = st.sidebar.text_input("Y-axis label", value="Value", key="bar_ylab")
         title = st.sidebar.text_input("Plot title", value="Stacked Bar Chart", key="bar_title")
-    else:  # Step Line Plot
+
+    else:  # Step line plot
         if len(numeric_cols) < 2:
             st.error("Step line plot requires at least TWO numeric columns.")
             st.stop()
 
         st.sidebar.subheader("Step Plot Options")
-        # Select which worksheets contribute a line (default = all)
         sheets_to_plot = st.sidebar.multiselect(
             "Sheets to include (one step line per sheet)",
             options=sheet_names,
@@ -85,31 +92,42 @@ if uploaded_file is not None:
             key="step_sheets"
         )
         if len(sheets_to_plot) == 0:
-            st.warning("Please select at least one worksheet to plot.")
+            st.warning("Please select at least one worksheet.")
             st.stop()
 
-        # X/Y selection based on the currently previewed sheet's numeric columns
         x_col = st.sidebar.selectbox("X-axis column", numeric_cols, key="step_x")
         y_col = st.sidebar.selectbox("Y-axis column", numeric_cols, key="step_y")
         x_label = st.sidebar.text_input("X-axis label", value=x_col, key="step_xlab")
         y_label = st.sidebar.text_input("Y-axis label", value=y_col, key="step_ylab")
         title = st.sidebar.text_input("Plot title", value=f"Step: {y_col} vs {x_col}", key="step_title")
-        linewidth = st.sidebar.number_input("Line width", min_value=0.5, max_value=10.0, value=2.0, step=0.5, key="step_lw")
+        linewidth = st.sidebar.number_input("Line width", 0.5, 10.0, 2.0, 0.5, key="step_lw")
 
+    # Figure size
     col1, col2 = st.sidebar.columns(2)
     with col1:
-        fig_width = st.number_input("Figure width", min_value=2.0, max_value=20.0, value=10.0)
+        fig_width = st.number_input("Figure width", 2.0, 20.0, 10.0)
     with col2:
-        fig_height = st.number_input("Figure height", min_value=2.0, max_value=20.0, value=6.0)
+        fig_height = st.number_input("Figure height", 2.0, 20.0, 6.0)
 
+    # Font size
     st.sidebar.header("Font Settings")
-    font_size = st.sidebar.number_input(
-        "Global font size", min_value=6, max_value=40, value=12, step=1
-    )
+    font_size = st.sidebar.number_input("Global font size", 6, 40, 12, 1)
     plt.rcParams["font.size"] = font_size
 
-    # --- SCATTER PLOT MODE ---
+    # --- Axis Scale (shared by Scatter + Step)
+    if plot_type in ["Scatter Plot", "Step Line Plot"]:
+        st.sidebar.header("Axis Scale")
+        x_scale = st.sidebar.selectbox("X-axis scale", ["Linear", "Log"], index=0)
+        y_scale = st.sidebar.selectbox("Y-axis scale", ["Linear", "Log"], index=0)
+    else:
+        x_scale = "Linear"
+        y_scale = "Linear"
+
+    # ============================================================
+    #                        SCATTER PLOT
+    # ============================================================
     if plot_type == "Scatter Plot":
+
         st.sidebar.header("Fit Options")
         fit_type = st.sidebar.selectbox(
             "Fit type",
@@ -119,7 +137,7 @@ if uploaded_file is not None:
         poly_degree = None
         if fit_type == "Polynomial":
             poly_degree = st.sidebar.number_input(
-                "Polynomial degree", min_value=2, max_value=10, value=2, step=1
+                "Polynomial degree", 2, 10, 2, 1
             )
 
         x = df[x_col].values
@@ -132,58 +150,49 @@ if uploaded_file is not None:
         x_clean = x[mask]
         y_clean = y[mask]
 
+        # --- Fits ---
         if fit_type == "Linear" and len(x_clean) > 1:
             m, b = np.polyfit(x_clean, y_clean, 1)
             x_fit = np.linspace(x_clean.min(), x_clean.max(), 300)
             y_fit = m * x_fit + b
-            ax.plot(x_fit, y_fit, color="red", linewidth=2,
-                    label=f"Linear: y={m:.3g}x+{b:.3g}")
-        elif fit_type == "Polynomial" and poly_degree is not None and len(x_clean) > poly_degree:
+            ax.plot(x_fit, y_fit, "r", linewidth=2)
+            ax.legend([f"Linear Fit: y={m:.3g}x+{b:.3g}"])
+
+        elif fit_type == "Polynomial" and poly_degree and len(x_clean) > poly_degree:
             coeffs = np.polyfit(x_clean, y_clean, poly_degree)
             poly = np.poly1d(coeffs)
             x_fit = np.linspace(x_clean.min(), x_clean.max(), 300)
             y_fit = poly(x_fit)
-            terms = []
-            deg = poly_degree
-            for c in coeffs:
-                if abs(c) < 1e-12:
-                    deg -= 1
-                    continue
-                if deg == 0:
-                    terms.append(f"{c:.3g}")
-                elif deg == 1:
-                    terms.append(f"{c:.3g}·x")
-                else:
-                    terms.append(f"{c:.3g}·x^{deg}")
-                deg -= 1
-            poly_str = " + ".join(terms).replace("+ -", "- ")
-            ax.plot(x_fit, y_fit, color="red", linewidth=2,
-                    label=f"Poly deg {poly_degree}: y={poly_str}")
+            ax.plot(x_fit, y_fit, "r", linewidth=2)
+            ax.legend([f"Poly deg {poly_degree}"])
+
         elif fit_type == "Exponential" and len(x_clean) > 1:
-            positive_mask = y_clean > 0
-            if positive_mask.sum() > 1:
-                x_pos = x_clean[positive_mask]
-                y_pos = y_clean[positive_mask]
-                log_y = np.log(y_pos)
-                b, log_a = np.polyfit(x_pos, log_y, 1)
+            pos_mask = y_clean > 0
+            if pos_mask.sum() > 1:
+                x_pos = x_clean[pos_mask]
+                y_pos = y_clean[pos_mask]
+                b, log_a = np.polyfit(x_pos, np.log(y_pos), 1)
                 a = np.exp(log_a)
                 x_fit = np.linspace(x_pos.min(), x_pos.max(), 300)
-                y_fit = a * np.exp(b * x_fit)
-                ax.plot(x_fit, y_fit, color="red", linewidth=2,
-                        label=f"Exp: y={a:.3g}·e^{b:.3g}x")
+                ax.plot(x_fit, a * np.exp(b * x_fit), "r", linewidth=2)
+                ax.legend([f"Exp Fit"])
             else:
                 st.warning("Exponential fit requires positive y-values.")
 
+        # --- Apply labels & scaling ---
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
         ax.set_title(title)
         ax.grid(True, linestyle="--", alpha=0.4)
-        if fit_type != "None":
-            ax.legend()
+
+        if x_scale == "Log":
+            ax.set_xscale("log")
+        if y_scale == "Log":
+            ax.set_yscale("log")
 
         st.pyplot(fig)
 
-        # Export scatter
+        # Export
         st.subheader("Export Plot")
 
         def get_image_bytes(fmt="png"):
@@ -194,23 +203,19 @@ if uploaded_file is not None:
 
         col_png, col_eps = st.columns(2)
         with col_png:
-            st.download_button(
-                "Download PNG (300 dpi)",
-                data=get_image_bytes("png"),
-                file_name="plot.png",
-                mime="image/png"
-            )
+            st.download_button("Download PNG", get_image_bytes("png"),
+                               "plot.png", "image/png")
         with col_eps:
-            st.download_button(
-                "Download EPS (300 dpi)",
-                data=get_image_bytes("eps"),
-                file_name="plot.eps",
-                mime="application/postscript"
-            )
+            st.download_button("Download EPS", get_image_bytes("eps"),
+                               "plot.eps", "application/postscript")
 
-    # --- STACKED BAR CHART MODE ---
+    # ============================================================
+    #                   STACKED BAR CHART
+    # ============================================================
     elif plot_type == "Stacked Bar Chart":
+
         st.subheader("Stacked Bar Chart (Each Row)")
+
         if len(numeric_cols) < 2:
             st.error("Stacked bar chart requires at least TWO numeric columns.")
             st.stop()
@@ -221,26 +226,28 @@ if uploaded_file is not None:
         indices = np.arange(len(df_bar))
 
         fig_bar, ax_bar = plt.subplots(figsize=(fig_width, fig_height), dpi=300)
+
         cumulative = np.zeros(len(df_bar))
 
         for col in numeric_cols:
-            values = df_bar[col].fillna(0).values
-            ax_bar.bar(indices, values, bottom=cumulative, label=col)
-            cumulative += values
+            vals = df_bar[col].fillna(0).to_numpy()
+            ax_bar.bar(indices, vals, bottom=cumulative, label=col)
+            cumulative += vals
 
         ax_bar.set_xticks(indices)
         ax_bar.set_xticklabels(x_labels, rotation=45, ha="right")
         ax_bar.set_xlabel(x_label)
         ax_bar.set_ylabel(y_label)
         ax_bar.set_title(title)
-        ax_bar.legend()
         ax_bar.grid(True, linestyle="--", alpha=0.4)
+        ax_bar.legend()
+
         st.pyplot(fig_bar)
 
-        # Export bar chart
+        # Export
         st.subheader("Export Bar Chart")
 
-        def get_bar_image_bytes(fmt="png"):
+        def get_bar_bytes(fmt="png"):
             buf = io.BytesIO()
             fig_bar.savefig(buf, format=fmt, dpi=300, bbox_inches="tight")
             buf.seek(0)
@@ -248,21 +255,15 @@ if uploaded_file is not None:
 
         col_png_bar, col_eps_bar = st.columns(2)
         with col_png_bar:
-            st.download_button(
-                "Download PNG (300 dpi)",
-                data=get_bar_image_bytes("png"),
-                file_name="bar_chart.png",
-                mime="image/png"
-            )
+            st.download_button("Download PNG", get_bar_bytes("png"),
+                               "bar_chart.png", "image/png")
         with col_eps_bar:
-            st.download_button(
-                "Download EPS (300 dpi)",
-                data=get_bar_image_bytes("eps"),
-                file_name="bar_chart.eps",
-                mime="application/postscript"
-            )
+            st.download_button("Download EPS", get_bar_bytes("eps"),
+                               "bar_chart.eps", "application/postscript")
 
-    # --- STEP LINE PLOT MODE ---
+    # ============================================================
+    #                      STEP LINE PLOT
+    # ============================================================
     else:
         st.subheader("Step Line Plot (one line per worksheet)")
 
@@ -271,11 +272,11 @@ if uploaded_file is not None:
         plotted_any = False
         skipped = []
 
-        for s in sheets_to_plot:
+        for sheet in sheets_to_plot:
             try:
-                df_s = pd.read_excel(xlsx, sheet_name=s)
+                df_s = pd.read_excel(xlsx, sheet_name=sheet)
 
-                # Coerce to numeric in case types differ across sheets
+                # Numeric conversion
                 x_vals = pd.to_numeric(df_s[x_col], errors="coerce").to_numpy()
                 y_vals = pd.to_numeric(df_s[y_col], errors="coerce").to_numpy()
 
@@ -284,26 +285,33 @@ if uploaded_file is not None:
                 y_clean = y_vals[mask]
 
                 if len(x_clean) == 0:
-                    skipped.append(f"{s} (no valid numeric pairs after cleaning)")
+                    skipped.append(f"{sheet} (no valid data)")
                     continue
 
-                # Sort by X to ensure monotonic step progression
+                # Sort by X
                 order = np.argsort(x_clean)
                 x_sorted = x_clean[order]
                 y_sorted = y_clean[order]
 
-                ax_step.step(x_sorted, y_sorted, where="pre", label=s, linewidth=linewidth)
+                ax_step.step(x_sorted, y_sorted, where="pre",
+                             linewidth=linewidth, label=sheet)
                 plotted_any = True
 
             except KeyError:
-                skipped.append(f"{s} (missing required columns '{x_col}' and/or '{y_col}')")
+                skipped.append(f"{sheet} (missing '{x_col}' or '{y_col}')")
             except Exception as e:
-                skipped.append(f"{s} (error: {e})")
+                skipped.append(f"{sheet} (error: {e})")
 
         ax_step.set_xlabel(x_label)
         ax_step.set_ylabel(y_label)
         ax_step.set_title(title)
         ax_step.grid(True, linestyle="--", alpha=0.4)
+
+        # Apply scaling
+        if x_scale == "Log":
+            ax_step.set_xscale("log")
+        if y_scale == "Log":
+            ax_step.set_yscale("log")
 
         if plotted_any and len(sheets_to_plot) > 1:
             ax_step.legend()
@@ -314,33 +322,25 @@ if uploaded_file is not None:
         if plotted_any:
             st.pyplot(fig_step)
         else:
-            st.error("No valid data to plot. Check selected sheets and columns.")
+            st.error("No valid data to plot.")
             st.stop()
 
-        # Export step plot
+        # Export
         st.subheader("Export Step Plot")
 
-        def get_step_image_bytes(fmt="png"):
+        def get_step_bytes(fmt="png"):
             buf = io.BytesIO()
             fig_step.savefig(buf, format=fmt, dpi=300, bbox_inches="tight")
             buf.seek(0)
             return buf
 
-        col_png_step, col_eps_step = st.columns(2)
-        with col_png_step:
-            st.download_button(
-                "Download PNG (300 dpi)",
-                data=get_step_image_bytes("png"),
-                file_name="step_plot.png",
-                mime="image/png"
-            )
-        with col_eps_step:
-            st.download_button(
-                "Download EPS (300 dpi)",
-                data=get_step_image_bytes("eps"),
-                file_name="step_plot.eps",
-                mime="application/postscript"
-            )
+        col_png_s, col_eps_s = st.columns(2)
+        with col_png_s:
+            st.download_button("Download PNG", get_step_bytes("png"),
+                               "step_plot.png", "image/png")
+        with col_eps_s:
+            st.download_button("Download EPS", get_step_bytes("eps"),
+                               "step_plot.eps", "application/postscript")
 
 else:
     st.info("Upload an Excel file to begin.")
